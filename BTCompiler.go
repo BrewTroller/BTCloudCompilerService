@@ -107,7 +107,7 @@ func BuildHandler(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 	//Clean-up the temp dir
-	defer os.Remove(tempDir)
+	defer os.RemoveAll(tempDir)
 
 	//Get request data
 	reqData, err := ioutil.ReadAll(req.Body)
