@@ -18,7 +18,7 @@ import (
 const app = "BrewTroller Build Bot"
 const version = "0.1.0"
 
-const SourceDir = "./BrewTroller"
+const SourceDir = "/BrewTroller"
 const OptionsFileName = "./BrewTroller/options.json"
 
 // Look for a run in debug mode flag, default to off
