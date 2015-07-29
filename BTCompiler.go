@@ -18,7 +18,7 @@ const app = "BrewTroller Build Bot"
 const version = "0.1.0"
 
 const SourceDir = "/BrewTroller"
-const OptionsFileName = "./BrewTroller/options.json"
+const OptionsFileName = "/BrewTroller/options.json"
 
 // Look for a run in debug mode flag, default to off
 var debugMode = flag.Bool("debug", false, "Enables server debug mode")
@@ -81,7 +81,8 @@ func HomeHandler(rw http.ResponseWriter, req *http.Request) {
 
 func OptionsHandler(rw http.ResponseWriter, req *http.Request) {
 	//Read options file
-	var opts, err = ioutil.ReadFile(OptionsFileName)
+	currDir, _ := osext.ExecutableFolder()
+	var opts, err = ioutil.ReadFile(currDir + OptionsFileName)
 	if err != nil {
 		rw.WriteHeader(http.StatusInternalServerError)
 		errResp := makeErrorResonse("500", err)
