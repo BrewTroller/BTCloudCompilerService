@@ -74,6 +74,7 @@ func HomeHandler(rw http.ResponseWriter, req *http.Request) {
 		uname, _ := c.Output()
 		info["host"] = string(uname)
 	}
+	rw.Header().Add("Access-Control-Allow-Origin", "*")
 	rw.Header().Add("Content-Type", "application/json")
 	encRes, _ := json.Marshal(info)
 	rw.Write(encRes)
@@ -88,6 +89,7 @@ func OptionsHandler(rw http.ResponseWriter, req *http.Request) {
 		errResp := makeErrorResonse("500", err)
 		rw.Write(errResp)
 	}
+	rw.Header().Add("Access-Control-Allow-Origin", "*")
 	rw.Header().Add("Content-Type", "application/json")
 	rw.Write(opts)
 }
@@ -102,6 +104,7 @@ func BuildHandler(rw http.ResponseWriter, req *http.Request) {
 	//Handle error making temp build directory
 	if err != nil {
 		errResp := makeErrorResonse("500", err)
+		rw.Header().Add("Access-Control-Allow-Origin", "*")
 		rw.WriteHeader(http.StatusInternalServerError)
 		rw.Write(errResp)
 		return
@@ -115,6 +118,7 @@ func BuildHandler(rw http.ResponseWriter, req *http.Request) {
 	//Handle error reading POST data
 	if err != nil {
 		errResp := makeErrorResonse("500", err)
+		rw.Header().Add("Access-Control-Allow-Origin", "*")
 		rw.WriteHeader(http.StatusInternalServerError)
 		rw.Write(errResp)
 		return
@@ -127,6 +131,7 @@ func BuildHandler(rw http.ResponseWriter, req *http.Request) {
 	//Handle errors unmarshalling build options
 	if err != nil {
 		errResp := makeErrorResonse("400", err)
+		rw.Header().Add("Access-Control-Allow-Origin", "*")
 		rw.WriteHeader(http.StatusBadRequest)
 		rw.Write(errResp)
 		return
@@ -137,6 +142,7 @@ func BuildHandler(rw http.ResponseWriter, req *http.Request) {
 	if !found {
 		err := errors.New("Board Option Must be Supplied!")
 		errResp := makeErrorResonse("400", err)
+		rw.Header().Add("Access-Control-Allow-Origin", "*")
 		rw.WriteHeader(http.StatusBadRequest)
 		rw.Write(errResp)
 		return
@@ -163,6 +169,7 @@ func BuildHandler(rw http.ResponseWriter, req *http.Request) {
 	//Handle cmake setup error
 	if err != nil {
 		errResp := makeErrorResonse("500", err, string(cmakeOut))
+		rw.Header().Add("Access-Control-Allow-Origin", "*")
 		rw.WriteHeader(http.StatusInternalServerError)
 		rw.Write(errResp)
 		return
@@ -175,6 +182,7 @@ func BuildHandler(rw http.ResponseWriter, req *http.Request) {
 	//Handle any errors from make
 	if err != nil {
 		errResp := makeErrorResonse("500", err, string(makeOut))
+		rw.Header().Add("Access-Control-Allow-Origin", "*")
 		rw.WriteHeader(http.StatusInternalServerError)
 		rw.Write(errResp)
 		return
@@ -184,6 +192,7 @@ func BuildHandler(rw http.ResponseWriter, req *http.Request) {
 	binary, err := ioutil.ReadFile(tempDir + "/src/BrewTroller-" + board + ".hex")
 	if err != nil {
 		errResp := makeErrorResonse("500", err)
+		rw.Header().Add("Access-Control-Allow-Origin", "*")
 		rw.WriteHeader(http.StatusInternalServerError)
 		rw.Write(errResp)
 		return
@@ -204,5 +213,6 @@ func BuildHandler(rw http.ResponseWriter, req *http.Request) {
 
 	enc, _ := json.Marshal(resp)
 	rw.Header().Add("Content-Type", "application/json")
+	rw.Header().Add("Access-Control-Allow-Origin", "*")
 	rw.Write(enc)
 }
