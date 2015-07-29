@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -189,9 +188,6 @@ func BuildHandler(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	//Base64 encode the binary so it can be transferred back
-	b64binary := base64.StdEncoding.EncodeToString(binary)
-
 	//Create response map
 	resp := make(map[string]string)
 
@@ -203,7 +199,7 @@ func BuildHandler(rw http.ResponseWriter, req *http.Request) {
 		resp["make-output"] = string(makeOut)
 	}
 
-	resp["binary"] = b64binary
+	resp["binary"] = string(binary)
 
 	enc, _ := json.Marshal(resp)
 	rw.Header().Add("Content-Type", "application/json")
