@@ -1,14 +1,12 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"github.com/gorilla/mux"
 	"github.com/kardianos/osext"
-	"html/template"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -19,8 +17,8 @@ import (
 	"time"
 )
 
-const app = "BrewTroller Build Bot"
-const version = "0.1.0"
+const app = "BrewTroller Cloud Compiler Service"
+const version = "1.0.0"
 
 const SourceDir = "/BrewTroller"
 const OptionsFileName = "/BrewTroller/options.json"
@@ -31,6 +29,127 @@ var (
 	pollPeriod = flag.Duration("poll", 5*time.Minute, "Github poll period")
 	gitRepo    = flag.String("git", "http://github.com/brewtroller/brewtroller", "BrewTroller Remote Repository")
 )
+
+type BuildServer struct {
+	version    string
+	gitURL     string
+	pollPeriod time.Duration
+
+	execFolder string
+
+	mu           sync.RWMutex //Protect the version tags and the source dir
+	optionsCache map[string][]map[string]interface{}
+}
+
+func (bs *BuildServer) updateTags() {
+	bs.mu.Lock()
+	//clone the remote in a local repo
+	localSrcDir := bs.execFolder + SourceDir
+	os.RemoveAll(localSrcDir)
+
+	cloneCmd := exec.Command("git", "clone", bs.gitURL, localSrcDir)
+	_, err := cloneCmd.CombinedOutput()
+	if err != nil {
+		panic(err)
+	}
+	//Check if Source dir exists
+	_, err = os.Stat(localSrcDir)
+	if err != nil {
+		panic("Could not create local source copy")
+	}
+	bs.mu.Unlock()
+
+	for true {
+		bs.mu.Lock()
+		//Clear out all current tags, in case any have been removed
+		clearCmd := exec.Command("git", "tag", "-l")
+		clearCmd.Dir = localSrcDir
+		removeCmd := exec.Command("xargs", "git", "tag", "-d")
+		removeCmd.Dir = localSrcDir
+		removeCmd.Stdin, _ = clearCmd.StdoutPipe()
+		removeCmd.Start()
+		clearCmd.Run()
+		removeCmd.Wait()
+
+		//Update the local repo
+		pullCmd := exec.Command("git", "pull")
+		pullCmd.Dir = localSrcDir
+		pullCmd.Run()
+
+		//get tag list
+		tagCmd := exec.Command("git", "tag", "-l", "v[0-9]*\\.[0-9]*\\.[0-9]*")
+		tagCmd.Dir = localSrcDir
+		list, _ := tagCmd.Output()
+
+		versionTags := strings.Split(string(list), "\n")
+		//remove any blank tags
+		for i := range versionTags {
+			if strings.EqualFold(versionTags[i], "") {
+				versionTags = append(versionTags[:i], versionTags[i+1:]...)
+			}
+		}
+		//Build options cache
+		bs.updateOptions(versionTags)
+
+		bs.mu.Unlock()
+		time.Sleep(bs.pollPeriod)
+	}
+}
+
+// This method should only ever be called from within the poll worker, as it does not explicity lock the optionsCache itself
+func (bs *BuildServer) updateOptions(versions []string) {
+
+	optsManifest := make(map[string][]map[string]interface{})
+
+	//parse the options manifest for each available version
+	for _, ver := range versions {
+		//checkout the version
+		checkoutCmd := exec.Command("git", "checkout", ver)
+		checkoutCmd.Dir = bs.execFolder + SourceDir
+		checkoutCmd.Run()
+
+		//parse the options file
+		var opts, err = ioutil.ReadFile(bs.execFolder + OptionsFileName)
+		if err != nil {
+			// file doesn't exist, don't add version to manifest
+			if *debugMode {
+				fmt.Println("Options file for " + version + " does not exist, or cannot be opened!")
+			}
+			continue
+		}
+		var parsedOpts []map[string]interface{}
+		err = json.Unmarshal(opts, &parsedOpts)
+		if err != nil {
+			if *debugMode {
+				fmt.Println("Options file for " + version + " is invalid and cannot be parsed!")
+			}
+			continue
+		}
+		optsManifest[ver] = parsedOpts
+	}
+	//update BuildServer Options Cache
+	bs.optionsCache = optsManifest
+}
+
+func NewServer(version string, gitUrl string, period time.Duration) *BuildServer {
+	execFolder, _ := osext.ExecutableFolder()
+	serv := &BuildServer{version: version, gitURL: gitUrl, pollPeriod: period, execFolder: execFolder}
+	go serv.updateTags()
+	return serv
+}
+
+func main() {
+	flag.Parse()
+	if *debugMode {
+		fmt.Println("Debug mode enabled")
+	}
+	server := NewServer(version, *gitRepo, *pollPeriod)
+	router := mux.NewRouter()
+	router.HandleFunc("/", server.HomeHandler).Methods("GET")
+	router.HandleFunc("/options", server.OptionsHandler).Methods("GET")
+	router.HandleFunc("/build", server.BuildHandler).Methods("POST")
+	http.ListenAndServe(":8080", router)
+}
 
 func makeErrorResonse(code string, err error, context ...string) []byte {
 	em := make(map[string]string)
@@ -62,95 +181,6 @@ func makeErrorResonse(code string, err error, context ...string) []byte {
 	return enc
 }
 
-type BuildServer struct {
-	version    string
-	gitURL     string
-	pollPeriod time.Duration
-
-	mu          sync.RWMutex //Protect the version tags and the source dir
-	versionTags []string
-}
-
-const verTempl = `[{
-		"type": "radio",
-		"id": "BuildVersion",
-		"title": "Firmware Version",
-		"description": "Select the firmware version you want to install on your BrewTroller Board",
-		"options": [{{range $index, $tag := .VersionTags}}{{if $index}}, {"optName": "{{$tag}}", "name": "{{$tag}}"}{{else}}{"optName": "{{$tag}}", "name": "{{$tag}}"}{{end}}{{end}}]
-	}]`
-
-func (bs *BuildServer) updateTags() {
-	bs.mu.Lock()
-	//clone the remote in a local repo
-	currDir, _ := osext.ExecutableFolder()
-	os.RemoveAll(currDir + SourceDir)
-
-	cloneCmd := exec.Command("git", "clone", bs.gitURL, currDir+SourceDir)
-	_, err := cloneCmd.CombinedOutput()
-	if err != nil {
-		panic(err)
-	}
-	//Check if Source dir exists
-	_, err = os.Stat(currDir + SourceDir)
-	if err != nil {
-		panic("Could not create local source copy")
-	}
-	bs.mu.Unlock()
-
-	for true {
-		bs.mu.Lock()
-		//Clear out all current tags, in case any have been removed
-		clearCmd := exec.Command("git", "tag", "-l")
-		clearCmd.Dir = currDir + SourceDir
-		removeCmd := exec.Command("xargs", "git", "tag", "-d")
-		removeCmd.Dir = currDir + SourceDir
-		removeCmd.Stdin, _ = clearCmd.StdoutPipe()
-		removeCmd.Start()
-		clearCmd.Run()
-		removeCmd.Wait()
-
-		//Update the local repo
-		pullCmd := exec.Command("git", "pull")
-		pullCmd.Dir = currDir + SourceDir
-		pullCmd.Run()
-
-		//get tag list
-		tagCmd := exec.Command("git", "tag", "-l", "v[0-9]*\\.[0-9]*\\.[0-9]*")
-		tagCmd.Dir = currDir + SourceDir
-		list, _ := tagCmd.Output()
-
-		bs.versionTags = strings.Split(string(list), "\n")
-		//remove any blank tags
-		for i := range bs.versionTags {
-			if strings.EqualFold(bs.versionTags[i], "") {
-				bs.versionTags = append(bs.versionTags[:i], bs.versionTags[i+1:]...)
-			}
-		}
-
-		bs.mu.Unlock()
-		time.Sleep(bs.pollPeriod)
-	}
-}
-
-func NewServer(version string, gitUrl string, period time.Duration) *BuildServer {
-	serv := &BuildServer{version: version, gitURL: gitUrl, pollPeriod: period}
-	go serv.updateTags()
-	return serv
-}
-
-func main() {
-	flag.Parse()
-	if *debugMode {
-		fmt.Println("Debug mode enabled")
-	}
-	server := NewServer(version, *gitRepo, *pollPeriod)
-	router := mux.NewRouter()
-	router.HandleFunc("/", server.HomeHandler).Methods("GET")
-	router.HandleFunc("/options", server.OptionsHandler).Methods("GET")
-	router.HandleFunc("/build", server.BuildHandler).Methods("POST")
-	http.ListenAndServe(":8080", router)
-}
-
 func (bs *BuildServer) HomeHandler(rw http.ResponseWriter, req *http.Request) {
 	info := make(map[string]string)
 	info["app"] = app
@@ -167,32 +197,10 @@ func (bs *BuildServer) HomeHandler(rw http.ResponseWriter, req *http.Request) {
 }
 
 func (bs *BuildServer) OptionsHandler(rw http.ResponseWriter, req *http.Request) {
-	//Read options file
-	currDir, _ := osext.ExecutableFolder()
-	var opts, err = ioutil.ReadFile(currDir + OptionsFileName)
-	if err != nil {
-		rw.WriteHeader(http.StatusInternalServerError)
-		errResp := makeErrorResonse("500", err)
-		rw.Write(errResp)
-	}
-	t := template.New("Versions Template")
-	t, err = t.Parse(verTempl)
-	var outBuf bytes.Buffer
-
 	bs.mu.RLock()
-	var data = struct {
-		VersionTags []string
-	}{bs.versionTags}
+	opts, _ := json.Marshal(bs.optionsCache)
 	bs.mu.RUnlock()
 
-	err = t.Execute(&outBuf, data)
-
-	var verOpt []map[string]interface{}
-	err = json.Unmarshal(outBuf.Bytes(), &verOpt)
-	var f []map[string]interface{}
-	json.Unmarshal(opts, &f)
-	f = append(verOpt, f[:]...)
-	opts, _ = json.Marshal(f)
 	rw.Header().Add("Access-Control-Allow-Origin", "*")
 	rw.Header().Add("Content-Type", "application/json")
 	rw.Write(opts)
@@ -263,13 +271,8 @@ func (bs *BuildServer) BuildHandler(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 	//Ensure that the build version is valid
-	validVer := false
 	bs.mu.RLock()
-	for i, _ := range bs.versionTags {
-		if strings.EqualFold(bs.versionTags[i], version) {
-			validVer = true
-		}
-	}
+	_, validVer := bs.optionsCache[version]
 	bs.mu.RUnlock()
 	if !validVer {
 		err := errors.New("Build Version " + version + " is invalid!")
@@ -292,11 +295,10 @@ func (bs *BuildServer) BuildHandler(rw http.ResponseWriter, req *http.Request) {
 		cmakeOpts = append(cmakeOpts, opt)
 	}
 	//Append the absolute path to the brewtroller source directory
-	currDir, _ := osext.ExecutableFolder()
 	cmakeOpts = append(cmakeOpts, tempDir)
 
 	//Clone the source repo into the temp dir
-	pathToSource := currDir + SourceDir
+	pathToSource := bs.execFolder + SourceDir
 	cloneCmd := exec.Command("git", "clone", pathToSource, tempDir)
 	bs.mu.RLock()
 	cloneCmd.Run()
