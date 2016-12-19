@@ -312,6 +312,18 @@ func (bs *BuildServer) BuildHandler(rw http.ResponseWriter, req *http.Request) {
 	buildDir := path.Join(tempDir, "/build")
 	os.MkdirAll(buildDir, 0777)
 
+        // Save copy of settings to build directory
+        optionsPath := path.Join(tempDir,"user_config.json")
+
+        err = ioutil.WriteFile(optionsPath, reqData, 0644)
+        if err != nil {
+               errResp := makeErrorResonse("500", err)
+               rw.Header().Add("Access-Control-Allow-Origin", "*")
+               rw.WriteHeader(http.StatusInternalServerError)
+               rw.Write(errResp)
+               return
+        }
+
 	//Attempt to setup Cmake build dir
 	cmakeCmd := exec.Command("cmake", cmakeOpts...)
 	cmakeCmd.Dir = buildDir
