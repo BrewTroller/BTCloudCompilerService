@@ -237,7 +237,7 @@ func (bs *BuildServer) BuildHandler(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	//Convert the post data to a map
-	optsMap := make(map[string]string)
+	optsMap := make(map[string]interface{})
 	err = json.Unmarshal(reqData, &optsMap)
 
 	//Handle errors unmarshalling build options
@@ -250,7 +250,7 @@ func (bs *BuildServer) BuildHandler(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	//Ensure we have a board option
-	board, found := optsMap["board"]
+	board, found := optsMap["board"].(string)
 	if !found {
 		err := errors.New("Board Option Must be Supplied!")
 		errResp := makeErrorResonse("400", err)
@@ -261,7 +261,7 @@ func (bs *BuildServer) BuildHandler(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	//Ensure we have a build verison
-	version, found := optsMap["BuildVersion"]
+	version, found := optsMap["BuildVersion"].(string)
 	if !found {
 		err := errors.New("Build Version Must be Supplied!")
 		errResp := makeErrorResonse("400", err)
@@ -291,8 +291,14 @@ func (bs *BuildServer) BuildHandler(rw http.ResponseWriter, req *http.Request) {
 	cmakeOpts := make([]string, 0, 20)
 	//iterate through the build options requested and make a slice to pass to cmake
 	for k, v := range optsMap {
-		opt := fmt.Sprintf("-D%s=%s", k, v)
-		cmakeOpts = append(cmakeOpts, opt)
+		switch val := v.(type) {
+        case string:
+                opt := fmt.Sprintf("-D%s=%s", k, val)
+                cmakeOpts = append(cmakeOpts, opt)
+        case int:
+                opt := fmt.Sprintf("-D%s=%d", k, val)
+                cmakeOpts = append(cmakeOpts, opt)
+        }
 	}
 	//Append the absolute path to the brewtroller source directory
 	cmakeOpts = append(cmakeOpts, tempDir)
